@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ovet SMS layers: Convex, Clerk, Telnyx, and current HV RDL failures</title>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      themeVariables: {
+        fontFamily: "IBM Plex Sans, ui-sans-serif, system-ui, sans-serif",
+        fontSize: "14px",
+        primaryColor: "#e8f1ee",
+        primaryTextColor: "#1c2421",
+        primaryBorderColor: "#2f5d50",
+        lineColor: "#3d4a45",
+        secondaryColor: "#f4efe6",
+        tertiaryColor: "#f7f4ee",
+        noteBkgColor: "#fff8e8",
+        noteBorderColor: "#c4a35a",
+      },
+    });
+  </script>
+  <style>
+    :root {
+      --ink: #1c2421;
+      --muted: #5c6863;
+      --line: #d7d1c4;
+      --paper: #f7f4ee;
+      --card: #fffcf7;
+      --ovet: #2f5d50;
+      --clerk: #3b4d8a;
+      --telnyx: #8a3d2a;
+      --convex: #4a3d6b;
+      --warn: #8a5a12;
+      --p0: #8a2a2a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 16px/1.5 "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    }
+    main { max-width: 1100px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2.25rem 0 0.75rem; border-top: 1px solid var(--line); padding-top: 1.5rem; }
+    h3 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+    .lede { font-size: 1.05rem; color: var(--muted); max-width: 48rem; }
+    .stamp { font-size: 0.8rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .grid { display: grid; gap: 0.75rem; }
+    @media (min-width: 800px) {
+      .grid.four { grid-template-columns: repeat(4, 1fr); }
+      .grid.three { grid-template-columns: repeat(3, 1fr); }
+      .grid.two { grid-template-columns: 1fr 1fr; }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+    }
+    .card h3 { margin-top: 0; }
+    .card.ovet { border-top: 4px solid var(--ovet); }
+    .card.clerk { border-top: 4px solid var(--clerk); }
+    .card.telnyx { border-top: 4px solid var(--telnyx); }
+    .card.convex { border-top: 4px solid var(--convex); }
+    .card.p0 { border-top: 4px solid var(--p0); }
+    .card.p1 { border-top: 4px solid var(--warn); }
+    .who { font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; background: var(--card); }
+    th, td { text-align: left; vertical-align: top; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--line); }
+    th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .yes { color: var(--ovet); font-weight: 600; }
+    .no { color: var(--telnyx); font-weight: 600; }
+    .maybe { color: var(--warn); font-weight: 600; }
+    code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.86em; background: #efe9dc; padding: 0.05em 0.3em; border-radius: 3px; }
+    a { color: var(--ovet); }
+    .diagram {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+      margin: 0.75rem 0 1rem;
+    }
+    .note {
+      background: #fff8e8;
+      border-left: 4px solid #c4a35a;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    .fail {
+      background: #f8ecec;
+      border-left: 4px solid var(--p0);
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    ul.tight { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+    footer { margin-top: 2.5rem; font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <p class="stamp">
+    Artifact · 2026-09-29 · current production HV RDL (<code>hvrdl</code>,
+    <code>kindhearted-blackbird-809</code>) plus the same ownership rules on redeem.
+    Staff UI is not on this path.
+  </p>
+  <h1>Three limits, three layers — and the failures that never leave Convex</h1>
+  <p class="lede">
+    <code>@convex-dev/rate-limiter</code> is not a stand-in for Telnyx or Clerk.
+    <code>parentInvitations</code> (10 reservations / minute / clinic) is taken
+    inside <code>reserve</code>, in the same mutation that claims the attempt,
+    <em>before</em> Clerk lookup/create and <em>before</em> Telnyx send.
+    Current HV RDL P0s die on that Convex wiring. Telnyx and Clerk 429s are a
+    later, separate failure and do not appear in these events.
+  </p>
+
+  <div class="note">
+    What changed in the reading: the 18:00 / 06:00 “hourly batch” is still not a
+    cron — it is many independent
+    <a href="https://docs.convex.dev/scheduling/scheduled-functions">scheduled functions</a>
+    (and Workpool booking jobs) whose <code>dueAt</code> lands on the sending-window
+    edge. The limiter is not “keep us under Telnyx 0.1 MPS.” It is an Ovet clinic
+    cap so a burst claims attempts atomically without turning a later vendor 429
+    into a spent SMS attempt. The P0 is the limiter document fighting itself
+    (OCC), then <code>runScheduled</code> treating that throw as “eligibility changed.”
+  </div>
+
+  <h2>1. Send-plane layers (not interchangeable)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Layer</th>
+        <th>What it protects</th>
+        <th>When it fires</th>
+        <th>Who chooses the number</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Convex <code>parentInvitations</code></td>
+        <td>This clinic’s burst; attempt claim stays atomic</td>
+        <td>Inside <code>reserve</code>, keyed by org</td>
+        <td><strong>Ovet.</strong> 10/min/clinic. Not HV RDL’s invitation window. Not Telnyx. Not Clerk.</td>
+      </tr>
+      <tr>
+        <td>Clerk</td>
+        <td>Parent user / token APIs (account-wide)</td>
+        <td>During preparation, after the reservation is claimed</td>
+        <td>Clerk remaining capacity. 429 here already spent an Ovet attempt if reserve succeeded.</td>
+      </tr>
+      <tr>
+        <td>Telnyx</td>
+        <td>Sender / profile send APIs (account-wide)</td>
+        <td>At <code>smsTransport.send</code></td>
+        <td>Telnyx remaining MPS / spend. 429 here is a classified send failure, not OCC.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Relying on Telnyx or Clerk instead of the Convex cap would mean: claim
+    <code>sending</code>, maybe create a parent, then get 429, then treat that as
+    an SMS attempt. Their limits are also not “HV RDL’s invitation window.”
+  </p>
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+  participant Job as runAt / Workpool job
+  participant Act as runScheduled action
+  participant Res as reserve mutation
+  participant RL as rateLimits row parentInvitations
+  participant Clerk as Clerk BAPI
+  participant Tel as Telnyx send
+  Job->>Act: dueAt = window edge
+  Act->>Res: sendInvitation → reserve
+  Res->>RL: limit 10/min per org
+  alt OCC exhausts / not booked / limiter throws
+    Res-->>Act: throw
+    Act->>Act: catch → suppressScheduled
+    Note over Clerk,Tel: never called
+    Act-->>Job: return null (pool sees success)
+  else token taken
+    Res->>Res: claim attempt, smsStatus sending
+    Res-->>Act: continue pipeline
+    Act->>Clerk: find or create parent
+    Act->>Tel: POST /messages
+  end
+    </pre>
+  </div>
+
+  <h2>2. What this path actually uses from Convex</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Primitive</th>
+        <th>URL</th>
+        <th>This SMS path</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Scheduled functions</td>
+        <td><a href="https://docs.convex.dev/scheduling/scheduled-functions">docs.convex.dev/scheduling/scheduled-functions</a></td>
+        <td class="yes">Invitations and reminders. <code>ctx.scheduler.runAt</code> / <code>runAfter</code> target <code>messaging/dispatch:runScheduled</code> (and <code>dispatchInvitation</code> at create). That is the “hourly batch”: many independent jobs waking at the same sending-window instant, not one cron tick. Actions run at most once; they are not OCC-retried.</td>
+      </tr>
+      <tr>
+        <td>Mutations + OCC</td>
+        <td><a href="https://docs.convex.dev/functions/error-handling">docs.convex.dev/functions/error-handling</a></td>
+        <td class="yes"><code>reserve</code> is a mutation. Concurrent writes to one <code>rateLimits</code> row retry a few times, then fail (<code>will_retry: false</code>). The caller is an action, which does not get that retry. Its catch treats every throw as eligibility changed (<code>suppressScheduled</code>).</td>
+      </tr>
+      <tr>
+        <td>Rate limiter component</td>
+        <td><a href="https://www.convex.dev/components/rate-limiter">convex.dev/components/rate-limiter</a> · <a href="https://stack.convex.dev/rate-limiting">Stack</a></td>
+        <td class="yes">Already mounted. <code>parentInvitations</code> is 10/min per org, taken inside <code>reserve</code>, before Clerk or Telnyx. That shared row is the OCC hotspot. Redeem uses the same library (<code>loginCode</code> 5, <code>loginCodes</code> 600) on a different plane. Telnyx/Clerk 429s are a later layer and are not these P0s.</td>
+      </tr>
+      <tr>
+        <td>Workpool</td>
+        <td><a href="https://www.convex.dev/components/workpool">convex.dev/components/workpool</a></td>
+        <td class="yes">Mounted as <code>schedulingPool</code>. Booking-confirmation SMS is enqueued here (<code>durablePool.enqueueAction</code> → the same <code>runScheduled</code>). Pool retries (4 attempts) only run if the action throws. Today it catches OCC / booking-required and returns, so the pool records success. Invitations and reminders stay on bare <code>runAt</code>.</td>
+      </tr>
+      <tr>
+        <td>Platform cron jobs</td>
+        <td><a href="https://docs.convex.dev/scheduling/cron-jobs">docs.convex.dev/scheduling/cron-jobs</a></td>
+        <td class="no">Used in <code>crons.ts</code> for login-code purge (hourly), scheduling-job reconcile (6h), photo sweep, artifact publish. None of those send invitation / reminder / booking SMS. HV RDL 06:00 / 18:00 is not this.</td>
+      </tr>
+      <tr>
+        <td>Crons component</td>
+        <td><a href="https://www.convex.dev/components/crons">convex.dev/components/crons</a></td>
+        <td class="no">Not mounted. The repo uses built-in <code>cronJobs()</code> from <code>convex/server</code>, not <code>@convex-dev/crons</code>.</td>
+      </tr>
+      <tr>
+        <td>Workflow</td>
+        <td><a href="https://www.convex.dev/components/workflow">convex.dev/components/workflow</a></td>
+        <td class="no">Mounted, used by intake anamnesis / cleanup, not SMS dispatch.</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TB
+  subgraph window["HV RDL sending-window edge 06:00 / 18:00 America/Toronto"]
+    Many["Many visits with the same dueAt"]
+  end
+  Many --> Inv["Bare scheduler.runAt<br/>invitation + reminder"]
+  Many --> Book["Workpool schedulingPool<br/>booking confirmation only"]
+  Inv --> Act["runScheduled action"]
+  Book --> Act
+  Act --> Mut["reserve mutation"]
+  Mut --> OneRow["One org rateLimits document"]
+  OneRow -->|OCC ok| After["Clerk then Telnyx"]
+  OneRow -->|OCC exhaust / not booked| Catch["catch → suppressScheduled"]
+  Catch --> Lie["smsDueAt cleared, false smsError"]
+  subgraph notThis["Not this failure"]
+    Cron["Built-in crons.ts sweeps"]
+    CronC["@convex-dev/crons — not mounted"]
+    Wf["Workflow — anamnesis"]
+  end
+    </pre>
+  </div>
+  <div class="note">
+    <strong>Shards: 8</strong> (if added) is only so the Convex limiter does not OCC
+    itself when many jobs write one <code>rateLimits</code> row. It does not change
+    Telnyx or Clerk. It is not Workpool <code>maxParallelism: 8</code> (a different
+    8, on job execution). HV RDL’s hourly batch is small enough that OCC retry +
+    <code>reserve: true</code> (reschedule instead of <code>suppressScheduled</code>)
+    is the real fix. Sharding is prophylaxis. This checkout’s
+    <code>parentInvitations</code> bucket has <em>no</em> <code>shards</code> field
+    today; only intake model budget uses <code>shards: 10</code>.
+  </div>
+
+  <h2>3. Current production — HV RDL</h2>
+  <p>
+    Clinic <code>hvrdl</code> on <code>kindhearted-blackbird-809</code>. Unattended
+    SMS path. Staff UI is not involved. HV Ovet and HV du Boisé share the same
+    code; they were not in these PostHog events. Window edges 06:00 / 18:00
+    America/Toronto → 10:00 / 22:00 UTC.
+  </p>
+  <div class="grid three">
+    <article class="card p0">
+      <p class="who">P0</p>
+      <h3>OCC on <code>rateLimits</code></h3>
+      <p>
+        Every clinic’s invitations, reminders, and booking texts share one
+        org-keyed limiter document. Many jobs write that row at once. Convex
+        retries the mutation four times, then fails (<code>will_retry: false</code>,
+        <code>run_reason: action</code>). That is our limiter fighting itself,
+        not Telnyx or Clerk.
+      </p>
+    </article>
+    <article class="card p0">
+      <p class="who">P0</p>
+      <h3><code>AUTOMATED_SMS_REQUIRES_BOOKING</code></h3>
+      <p>
+        A scheduled job runs against a visit that is not booked (Pending /
+        proposed, or no time). <code>reserve</code> throws. Same
+        <code>runScheduled</code> catch as OCC.
+      </p>
+    </article>
+    <article class="card p1">
+      <p class="who">P1</p>
+      <h3>Reminder rescue fail-closed</h3>
+      <p>
+        Production <code>enrollRecoveredReminders</code> (<code>run_reason: httpApi</code>)
+        <code>requireThat</code>s “Visit is cancelled or not scheduled” and aborts
+        the whole batch. One bad id rolls back every other reminder in that mutation.
+        This workspace snapshot of <code>main</code> does not define that symbol;
+        the failure is observed on production.
+      </p>
+    </article>
+  </div>
+  <p>
+    <code>runScheduled</code> catches any throw and calls <code>suppressScheduled</code>.
+    Occupied limiter and “not booked” are treated as “eligibility changed.”
+  </p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  Throw["reserve throws<br/>OCC or REQUIRES_BOOKING"] --> Catch["runScheduled catch"]
+  Catch --> Sup["suppressScheduled"]
+  Sup --> Due["smsDueAt / reminderDueAt cleared"]
+  Sup --> Err["smsError: eligibility changed"]
+  Sup --> Gone["scheduled function already ran"]
+  Gone --> NoReplay["no automatic replay"]
+  Catch --> Pool["Workpool: action returned null<br/>retries do not run"]
+    </pre>
+  </div>
+
+  <h2>4. Downstream (still on this Convex wiring)</h2>
+  <ul>
+    <li>Eligible owners do not get the text. OCC / suppress clears <code>smsDueAt</code> and writes a false <code>smsError</code>. The job is gone. Telnyx is never called. Clerk is never called. No automatic replay.</li>
+    <li>Booking confirmations look successful to the work pool. <code>runScheduled</code> swallows the error, so pool retries do not run. The clinic task that a real send failure would open often never appears.</li>
+    <li>Unbooked visits are noise that still burns the path. One Pending row in the 06:00 batch does not stop other jobs, but it pages as P0 and, if it shares the limiter stampede, adds OCC.</li>
+    <li>Rescue cannot finish. One cancelled / unscheduled id rolls back every other reminder in that <code>httpApi</code> call. Those visits stay without <code>reminderDueAt</code>.</li>
+    <li>Operators get a lying signal. PostHog and <code>smsError</code> say eligibility or config; the visit is often still sendable.</li>
+    <li>Nothing heals old rows. Prototype policy: no backfill. A suppressed invitation stays suppressed until someone sends again.</li>
+    <li>Telnyx / Clerk 429 is a later, separate failure. It only happens after a reservation is claimed. These P0s die before that boundary.</li>
+  </ul>
+  <div class="fail">
+    Until this is deployed, HV RDL’s 06:00 / 18:00 batches can still drop real
+    reservations, and the reminder rescue can still fail closed on one bad id.
+  </div>
+
+  <h2>5. Redeem plane is unchanged — Clerk still cannot own 5 / 600</h2>
+  <p>
+    Login-handle guesses still return <code>null</code> before Clerk.
+    <code>parentInvitations</code> and <code>loginCodes</code> share a library,
+    not a purpose. Keep the library for pre-Clerk / pre-Telnyx caps. Do not
+    delete either bucket because a vendor 429 exists later.
+  </p>
+  <div class="grid two">
+    <article class="card ovet">
+      <p class="who">Send · parentInvitations</p>
+      <h3>10 / min / clinic</h3>
+      <ul class="tight">
+        <li>Authenticated scheduled jobs</li>
+        <li>Taken with the attempt claim</li>
+        <li>Protects this org’s burst and OCC surface</li>
+        <li>Shards optional; OCC retry / reschedule is the product fix</li>
+      </ul>
+    </article>
+    <article class="card clerk">
+      <p class="who">Open · loginCode / loginCodes</p>
+      <h3>5 / handle and 600 global</h3>
+      <ul class="tight">
+        <li>Public unauthenticated redeem</li>
+        <li>Guesses never reach Clerk</li>
+        <li>Ovet invents 5 and 600</li>
+        <li>Clerk 429 only on a successful claim’s mint</li>
+      </ul>
+    </article>
+  </div>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  Q["What failed?"] --> C{"Did reserve claim<br/>an attempt?"}
+  C -->|"No: OCC, not booked,<br/>limiter throw"| ConvexFail["Convex-only<br/>suppress lies · no vendor"]
+  C -->|"Yes"| V{"Who 429d?"}
+  V --> ClerkQ["Clerk account APIs"]
+  V --> TelQ["Telnyx send APIs"]
+  Q2["What is being limited on purpose?"] --> Pre["Traffic before Clerk/Telnyx"]
+  Pre --> Keep["Keep Convex rateLimiter"]
+    </pre>
+  </div>
+
+  <h2>6. Who should decide numbers (revised)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Number</th>
+        <th>Owner</th>
+        <th>Do not confuse with</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>10 / min <code>parentInvitations</code></td>
+        <td>Ovet clinic cap, atomic with attempt</td>
+        <td>Telnyx 0.1 MPS; Clerk 100/10s; HV RDL 06:00–18:00 window</td>
+      </tr>
+      <tr>
+        <td>Limiter <code>shards</code></td>
+        <td>Ovet / Convex OCC hygiene, optional</td>
+        <td>Workpool parallelism 8; vendor QPS</td>
+      </tr>
+      <tr>
+        <td>5 and 600 on redeem</td>
+        <td>Ovet guessing bounds</td>
+        <td>Clerk FAPI 5/10s; Clerk BAPI 600/min coincidence</td>
+      </tr>
+      <tr>
+        <td>06:00 / 18:00 local</td>
+        <td>Clinic messaging settings + <code>runAt</code> per visit</td>
+        <td>Platform cron; Crons component; Telnyx scheduled messages</td>
+      </tr>
+      <tr>
+        <td>Workpool 4 retries / parallelism 8</td>
+        <td>Convex job runtime for booking actions that <em>throw</em></td>
+        <td>SMS MPS; today’s swallowed OCC (retries never run)</td>
+      </tr>
+      <tr>
+        <td>Ten SMS attempts, contact cutoff</td>
+        <td>Ovet policy after a claimed reservation</td>
+        <td>OCC suppress (no attempt was claimed)</td>
+      </tr>
+      <tr>
+        <td>Clerk / Telnyx 429</td>
+        <td>Vendor remaining capacity, after claim</td>
+        <td>These P0s — they never get that far</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <footer>
+    Repo: <code>messaging/dispatch.ts</code> (<code>parentInvitations</code>,
+    <code>AUTOMATED_SMS_REQUIRES_BOOKING</code>, <code>runScheduled</code>,
+    <code>suppressScheduled</code>), <code>lib/jobs.ts</code>, <code>messaging/jobs.ts</code>,
+    <code>crons.ts</code>, <code>convex.config.ts</code>, <code>messaging/loginCodes.ts</code>.
+    Production incident names and <code>enrollRecoveredReminders</code> are HV RDL
+    observations on <code>kindhearted-blackbird-809</code>, not a symbol on this
+    <code>main</code> snapshot.
+  </footer>
+</main>
+</body>
+</html>
